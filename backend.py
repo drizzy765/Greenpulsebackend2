@@ -449,27 +449,66 @@ async def ai_report(req: ReportRequest, user: DevUser = Depends(current_active_u
     cats = df.groupby('source_category')['emissions_kgCO2e'].sum().to_dict()
     prompt = f"Write an executive summary for a Carbon Emission Report.\nTotal: {total:.2f} kgCO2e.\nBreakdown: {cats}\nTone: Professional, max 100 words."
     summary = await ask_gemini(prompt)
-    # PDF
+    # PDF Generation using SimpleDocTemplate for automatic layout handling
     buffer = io.BytesIO()
-    c = canvas.Canvas(buffer, pagesize=letter)
-    c.setFont("Helvetica-Bold", 16)
-    c.drawString(50, 750, f"Carbon Report: {business_id}")
-    c.setFont("Helvetica", 12)
-    c.drawString(50, 720, f"Total Emissions: {total:.2f} kgCO2e")
-    text_obj = c.beginText(50, 680)
-    for line in summary.split('\n'):
-        text_obj.textLine(line)
-    c.drawText(text_obj)
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import inch
+    
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=letter,
+        rightMargin=72, leftMargin=72,
+        topMargin=72, bottomMargin=72
+    )
+    
+    Story = []
+    styles = getSampleStyleSheet()
+    
+    # Custom Styles
+    title_style = styles["Heading1"]
+    title_style.alignment = 1 # Center
+    
+    normal_style = styles["Normal"]
+    normal_style.fontSize = 11
+    normal_style.leading = 14
+    
+    # Title
+    Story.append(Paragraph(f"Carbon Report: {business_id}", title_style))
+    Story.append(Spacer(1, 12))
+    
+    # Subtitle
+    Story.append(Paragraph(f"<b>Total Emissions:</b> {total:.2f} kgCO2e", normal_style))
+    Story.append(Spacer(1, 24))
+    
+    # Executive Summary
+    Story.append(Paragraph("<b>Executive Summary</b>", styles["Heading3"]))
+    Story.append(Spacer(1, 12))
+    
+    # Handle newlines in AI response
+    formatted_summary = summary.replace('\n', '<br/>')
+    Story.append(Paragraph(formatted_summary, normal_style))
+    Story.append(Spacer(1, 24))
+    
     # Pie Chart
-    drawing = Drawing(300, 200)
+    # We need to render the drawing to a flowable or keep using the drawing flowable if available
+    # For simplicity in SimpleDocTemplate with Drawing, we wrap it
+    drawing = Drawing(400, 200)
     pie = Pie()
-    pie.x = 100; pie.y = 0
+    pie.x = 100
+    pie.y = 50
     pie.data = list(cats.values())
     pie.labels = list(cats.keys())
+    
+    # Legend/Labels - ReportLab Pie chart is simple, might need explicit legend or better sizing
+    # Making it simpler for stability:
+    pie.width = 150
+    pie.height = 150
+    
     drawing.add(pie)
-    drawing.drawOn(c, 50, 400)
-    c.showPage()
-    c.save()
+    Story.append(drawing)
+    
+    doc.build(Story)
     buffer.seek(0)
     return Response(content=buffer.getvalue(), media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename=report_{business_id}.pdf"})
 
